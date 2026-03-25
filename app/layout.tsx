@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Playfair_Display, Inter, Geist } from "next/font/google";
-import "./globals.css";
+import "@/globals.css";
 import { cn } from "@/lib/utils";
 
 const playfair = Playfair_Display({ 
@@ -11,8 +11,8 @@ const playfair = Playfair_Display({
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 export const metadata: Metadata = {
-  title: "ZENITH | Beyond Reality",
-  description: "Luxury Travel Experiences",
+  title: "Automatic Invoice Generator",
+  description: "Automated invoicing solution for affordable wholesale logistics",
 };
 
 export default function RootLayout({

@@ -132,9 +132,9 @@ export default function ProfessionalInvoicing() {
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Landmark className="text-blue-500 w-6 h-6" />
-              <span className="text-sm font-bold tracking-widest text-blue-500 uppercase">Logistics Portal</span>
+              <span className="text-sm font-bold tracking-widest text-blue-500 uppercase">AFFORDABLE WHOLESALE</span><span className="text-sm text-zinc-500">Logistics Invoicing</span> 
             </div>
-            <h1 className="text-4xl font-black tracking-tight text-white uppercase italic">
+            <h1 className="text-4xl font-black tracking-tight text-white uppercase">
               Automatic <span className="text-zinc-500">Invoicing</span>
             </h1>
           </div>
