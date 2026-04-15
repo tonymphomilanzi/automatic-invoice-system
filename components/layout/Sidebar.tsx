@@ -15,7 +15,7 @@ import {
   Settings,
   LogOut,
   LayoutDashboard,
-  TrendingUp,
+  TrendingUp,FileCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -31,52 +31,23 @@ const NAV_ITEMS = [
   {
     group: "Core",
     items: [
-      {
-        label: "Dashboard",
-        href: "/",
-        icon: LayoutDashboard,
-        badge: null,
-      },
-      {
-        label: "Invoicing",
-        href: "/invoicing",
-        icon: FileText,
-        badge: null,
-      },
+      { label: "Dashboard", href: "/", icon: LayoutDashboard, badge: null },
+      { label: "Invoicing", href: "/invoicing", icon: FileText, badge: null },
     ],
   },
   {
     group: "Operations",
     items: [
-      {
-        label: "Warehouse",
-        href: "/warehouse",
-        icon: Warehouse,
-        badge: "New",
-      },
-      {
-        label: "Bin Cards",
-        href: "/bincards",
-        icon: ClipboardList,
-        badge: null,
-      },
+      { label: "PODs", href: "/pods", icon: FileCheck, badge: null },
+      { label: "Warehouse", href: "/warehouse", icon: Warehouse, badge: null },
+      { label: "Bin Cards", href: "/bincards", icon: ClipboardList, badge: null },
     ],
   },
   {
     group: "Finance",
     items: [
-      {
-        label: "Statements",
-        href: "/statements",
-        icon: BarChart3,
-        badge: null,
-      },
-      {
-        label: "Analytics",
-        href: "/analytics",
-        icon: TrendingUp,
-        badge: null,
-      },
+      { label: "Statements", href: "/statements", icon: BarChart3, badge: null },
+      { label: "Analytics", href: "/analytics", icon: TrendingUp, badge: null },
     ],
   },
 ];
