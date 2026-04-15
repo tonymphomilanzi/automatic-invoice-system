@@ -26,6 +26,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+import { useSettings } from "@/lib/settings-store";
+
+
 // ── Nav items definition ──────────────────────────────────────────────────────
 const NAV_ITEMS = [
   {
@@ -86,6 +89,10 @@ export default function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const pathname = usePathname();
 
+  
+
+  const [settings] = useSettings();
+
   return (
     <TooltipProvider delayDuration={0}>
       <aside
@@ -96,26 +103,27 @@ export default function Sidebar() {
         )}
       >
         {/* ── Logo ── */}
-        <div
-          className={cn(
-            "flex items-center gap-3 px-4 py-5 border-b border-zinc-900",
-            collapsed && "justify-center px-0"
-          )}
-        >
-          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-            <Landmark className="w-4 h-4 text-white" />
-          </div>
-          {!collapsed && (
-            <div className="overflow-hidden">
-              <p className="text-xs font-black tracking-widest text-white uppercase leading-none">
-                Affordable
-              </p>
-              <p className="text-[9px] text-zinc-500 uppercase tracking-wider leading-none mt-0.5">
-                Wholesale & Transport
-              </p>
-            </div>
-          )}
-        </div>
+<div className={cn(
+  "flex items-center gap-3 px-4 py-5 border-b border-zinc-900",
+  collapsed && "justify-center px-0"
+)}>
+  <div
+    className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-black"
+    style={{ background: settings.primaryColor }}
+  >
+    {settings.logoText || "AW"}
+  </div>
+  {!collapsed && (
+    <div className="overflow-hidden">
+      <p className="text-xs font-black tracking-widest text-white uppercase leading-none truncate max-w-[160px]">
+        {settings.tradingName || "Affordable"}
+      </p>
+      <p className="text-[9px] text-zinc-500 uppercase tracking-wider leading-none mt-0.5">
+        {settings.tagline || "Management"}
+      </p>
+    </div>
+  )}
+</div>
 
         {/* ── Navigation ── */}
         <nav className="flex-1 overflow-y-auto py-4 px-2 space-y-6">
