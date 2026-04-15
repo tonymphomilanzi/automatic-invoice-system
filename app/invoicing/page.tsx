@@ -149,10 +149,17 @@ const generateInvoiceHTML = (data: InvoiceRow): string => `
 </html>`;
 
 // ── Stats Card ────────────────────────────────────────────────────────────────
+// ── Stats Card ────────────────────────────────────────────────────────────────
 function StatsCard({
-  title, value, icon, highlight = false,
+  title,
+  value,
+  icon: Icon,
+  highlight = false,
 }: {
-  title: string; value: string; icon: React.ReactNode; highlight?: boolean;
+  title: string;
+  value: string;
+  icon: React.ElementType;
+  highlight?: boolean;
 }) {
   return (
     <Card
@@ -166,7 +173,7 @@ function StatsCard({
           {title}
         </CardTitle>
         <div className={highlight ? "text-blue-400" : "text-zinc-600"}>
-          {React.cloneElement(icon as React.ReactElement, { size: 13 })}
+          <Icon size={13} />
         </div>
       </CardHeader>
       <CardContent className="px-5 pb-4">
@@ -182,7 +189,6 @@ function StatsCard({
     </Card>
   );
 }
-
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function InvoicingPage() {
   const [data, setData] = useState<InvoiceRow[]>([]);
@@ -372,24 +378,25 @@ export default function InvoicingPage() {
           </div>
 
           {/* ── Stats ── */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <StatsCard
-              title="Total Subtotal"
-              value={`MWK ${formatMoney(totals.amount)}`}
-              icon={<Info />}
-            />
-            <StatsCard
-              title={`VAT (${VAT_RATE * 100}%)`}
-              value={`MWK ${formatMoney(totals.vat)}`}
-              icon={<AlertCircle />}
-            />
-            <StatsCard
-              title="Grand Total"
-              value={`MWK ${formatMoney(totals.total)}`}
-              icon={<CheckCircle2 />}
-              highlight
-            />
-          </div>
+   
+<div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+  <StatsCard
+    title="Total Subtotal"
+    value={`MWK ${formatMoney(totals.amount)}`}
+    icon={Info}
+  />
+  <StatsCard
+    title={`VAT (${VAT_RATE * 100}%)`}
+    value={`MWK ${formatMoney(totals.vat)}`}
+    icon={AlertCircle}
+  />
+  <StatsCard
+    title="Grand Total"
+    value={`MWK ${formatMoney(totals.total)}`}
+    icon={CheckCircle2}
+    highlight
+  />
+</div>
 
           {/* ── Action Bar ── */}
           <div className="flex flex-col sm:flex-row gap-3">
