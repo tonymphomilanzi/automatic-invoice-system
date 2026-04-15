@@ -26,6 +26,20 @@ export interface InvoiceRow {
   savedAt: string;
 }
 
+// Add to KEYS object:
+// BATCHES: "aw_invoice_batches",
+
+export interface InvoiceBatch {
+  id: string;
+  name: string;          // e.g. "Batch #3 — 12 Jun 2025"
+  savedAt: string;
+  invoices: InvoiceRow[];
+  firstInvoiceNo: string;
+  lastInvoiceNo: string;
+}
+
+
+
 export interface WarehouseItem {
   id: string;
   name: string;
@@ -92,6 +106,7 @@ export interface Driver {
 const KEYS = {
   INVOICES: "aw_invoices",
   INVOICE_COUNTER: `aw_inv_counter_${new Date().getFullYear()}`,
+ INVOICE_BATCHES: "aw_invoice_batches",   // ← new
   WAREHOUSE: "aw_warehouse",
   BINCARDS: "aw_bincards",
   BINCARD_UNITS: "aw_bincard_units",
@@ -160,6 +175,11 @@ function useLocalStore<T>(key: string, initial: T) {
 export function useInvoices() {
   return useLocalStore<InvoiceRow[]>(KEYS.INVOICES, []);
 }
+
+export function useInvoiceBatches() {
+  return useLocalStore<InvoiceBatch[]>("aw_invoice_batches", []);
+}
+
 
 export function useInvoiceCounter() {
   return useLocalStore<number>(KEYS.INVOICE_COUNTER, 80);
