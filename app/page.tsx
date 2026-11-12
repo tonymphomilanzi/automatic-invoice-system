@@ -1,4 +1,7 @@
 // app/page.tsx
+"use client";
+
+import { useMemo } from "react";
 import AppShell from "@/components/layout/AppShell";
 import {
   FileText,
@@ -9,53 +12,58 @@ import {
   TrendingDown,
   ArrowRight,
   Activity,
+  AlertTriangle,
+  Package,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
+import {
+  useWarehouse,
+  useBinCards,
+  type BinCard,
+  type WarehouseItem,
+} from "@/lib/store";
 
-// ── Stat Cards ────────────────────────────────────────────────────────────────
-const STATS = [
-  {
-    title: "Total Invoices",
-    value: "—",
-    change: null,
-    icon: FileText,
-    color: "text-blue-400",
-    bg: "bg-blue-500/10",
-    href: "/invoicing",
-  },
-  {
-    title: "Warehouse Items",
-    value: "—",
-    change: null,
-    icon: Warehouse,
-    color: "text-violet-400",
-    bg: "bg-violet-500/10",
-    href: "/warehouse",
-  },
-  {
-    title: "Bin Cards",
-    value: "—",
-    change: null,
-    icon: ClipboardList,
-    color: "text-emerald-400",
-    bg: "bg-emerald-500/10",
-    href: "/bincards",
-  },
-  {
-    title: "This Month",
-    value: "MWK —",
-    change: null,
-    icon: BarChart3,
-    color: "text-amber-400",
-    bg: "bg-amber-500/10",
-    href: "/statements",
-  },
-];
+function cardBalance(card: BinCard) {
+  const txs = card.transactions;
+  return txs.length > 0 ? txs[txs.length - 1].balance : card.openingBalance;
+}
 
-// ── Quick Links ───────────────────────────────────────────────────────────────
+function lastActivityDate(card: BinCard) {
+  if (card.transactions.length > 0) return card.transactions[card.transactions.length - 1].date;
+  return card.createdAt?.slice(0, 10) ?? "";
+}
+
+function norm(s: string) {
+  return s.trim().toLowerCase();
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function parseDate(value?: string) {
+  if (!value) return 0;
+  const iso = Date.parse(value);
+  if (!Number.isNaN(iso)) return iso;
+  const m = value.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) return Date.parse(`${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`);
+  return 0;
+}
+
+function inThisMonth(value?: string) {
+  const t = parseDate(value);
+  if (!t) return false;
+  const d = new Date(t);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+
 const QUICK_LINKS = [
   {
     title: "Create Invoices",
@@ -88,17 +96,133 @@ const QUICK_LINKS = [
 ];
 
 export default function DashboardPage() {
+  const [items] = useWarehouse();
+  const [cards] = useBinCards();
+
+  const cardByName = useMemo(() => {
+    const map = new Map<string, BinCard>();
+    for (const c of cards) map.set(norm(c.itemName), c);
+    return map;
+  }, [cards]);
+
+  const inventory = useMemo(() => {
+    const byName = new Map<string, WarehouseItem & { entries: number }>();
+
+    for (const item of items) {
+      const card = cardByName.get(norm(item.name));
+      byName.set(norm(item.name), {
+        ...item,
+        quantity: card ? cardBalance(card) : item.quantity,
+        unit: card?.unit || item.unit,
+        location: card?.location || item.location,
+        lastUpdated: card ? lastActivityDate(card) : item.lastUpdated,
+        entries: card?.transactions.length ?? 0,
+      });
+    }
+
+    for (const card of cards) {
+      const key = norm(card.itemName);
+      if (byName.has(key)) continue;
+      byName.set(key, {
+        id: card.id,
+        name: card.itemName,
+        category: "",
+        unit: card.unit,
+        quantity: cardBalance(card),
+        minStock: 0,
+        location: card.location,
+        lastUpdated: lastActivityDate(card),
+        entries: card.transactions.length,
+      });
+    }
+
+    return Array.from(byName.values());
+  }, [items, cardByName]);
+
+  const monthTx = useMemo(
+    () => cards.flatMap((c) => c.transactions.filter((t) => inThisMonth(t.date))),
+    [cards]
+  );
+
+  const stats = useMemo(() => {
+    const lowStock = inventory.filter((i) => i.minStock > 0 && i.quantity <= i.minStock).length;
+    const outOfStock = inventory.filter((i) => i.quantity === 0).length;
+    return {
+      warehouse: inventory.length,
+      binCards: cards.length,
+      movements: monthTx.length,
+      alerts: lowStock + outOfStock,
+    };
+  }, [inventory, cards.length, monthTx.length]);
+
+  const recentActivity = useMemo(() => {
+    const rows = cards.flatMap((card) =>
+      card.transactions.map((tx, idx) => ({
+        id: tx.id,
+        date: tx.date,
+        sort: parseDate(tx.date) + idx,
+        itemName: card.itemName,
+        location: card.location,
+        unit: card.unit,
+        type: tx.type,
+        quantity: tx.quantity,
+        balance: tx.balance,
+        reference: tx.reference,
+        remarks: tx.remarks,
+        issuedTo: tx.issuedTo,
+        href: "/bincards",
+      }))
+    );
+
+    rows.sort((a, b) => b.sort - a.sort);
+    return rows.slice(0, 12);
+  }, [cards]);
+
+  const STATS = [
+    {
+      title: "Warehouse Items",
+      value: String(stats.warehouse),
+      icon: Warehouse,
+      color: "text-violet-400",
+      bg: "bg-violet-500/10",
+      href: "/warehouse",
+    },
+    {
+      title: "Bin Cards",
+      value: String(stats.binCards),
+      icon: ClipboardList,
+      color: "text-emerald-400",
+      bg: "bg-emerald-500/10",
+      href: "/bincards",
+    },
+    {
+      title: "Movements This Month",
+      value: String(stats.movements),
+      icon: BarChart3,
+      color: "text-amber-400",
+      bg: "bg-amber-500/10",
+      href: "/warehouse",
+    },
+    {
+      title: "Stock Alerts",
+      value: String(stats.alerts),
+      icon: AlertTriangle,
+      color: "text-red-400",
+      bg: "bg-red-500/10",
+      href: "/warehouse",
+    },
+  ];
+
   return (
     <AppShell>
       <div className="space-y-8 max-w-7xl mx-auto">
-        {/* ── Welcome ── */}
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-black text-white tracking-tight">
-              Good morning 👋
+              {greeting()} 👋
             </h2>
             <p className="text-zinc-500 text-sm mt-1">
-              Here's what's happening at Affordable Wholesale today.
+              Live stock and bin card activity at Affordable Wholesale.
             </p>
           </div>
           <Badge className="bg-zinc-900 text-zinc-400 border-zinc-800 font-normal text-xs">
@@ -107,7 +231,6 @@ export default function DashboardPage() {
           </Badge>
         </div>
 
-        {/* ── Stats Grid ── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {STATS.map((stat) => {
             const Icon = stat.icon;
@@ -134,7 +257,6 @@ export default function DashboardPage() {
           })}
         </div>
 
-        {/* ── Quick Access ── */}
         <div>
           <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">
             Quick Access
@@ -165,18 +287,64 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* ── Recent Activity Placeholder ── */}
         <div>
-          <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500 mb-4">
-            Recent Activity
-          </h3>
-          <Card className="bg-zinc-950 border-zinc-900">
-            <CardContent className="p-12 text-center">
-              <Activity className="w-8 h-8 text-zinc-800 mx-auto mb-3" />
-              <p className="text-zinc-600 text-sm">
-                Activity will appear here as you use the system.
-              </p>
-            </CardContent>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">
+              Recent Activity
+            </h3>
+            <Link href="/bincards" className="text-[11px] text-zinc-500 hover:text-zinc-300">
+              View bin cards →
+            </Link>
+          </div>
+          <Card className="bg-zinc-950 border-zinc-900 overflow-hidden">
+            {recentActivity.length === 0 ? (
+              <CardContent className="p-12 text-center">
+                <Package className="w-8 h-8 text-zinc-800 mx-auto mb-3" />
+                <p className="text-zinc-600 text-sm">
+                  Activity will appear here as you record receipts and issues.
+                </p>
+              </CardContent>
+            ) : (
+              <div className="divide-y divide-zinc-900">
+                {recentActivity.map((tx) => (
+                  <Link href={tx.href} key={tx.id} className="block hover:bg-zinc-900/40 transition-colors">
+                    <div className="px-5 py-3.5 flex items-center gap-4">
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                        tx.type === "Receipt" ? "bg-green-500/10" : "bg-red-500/10"
+                      )}>
+                        {tx.type === "Receipt"
+                          ? <TrendingUp className="w-4 h-4 text-green-400" />
+                          : <TrendingDown className="w-4 h-4 text-red-400" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-white font-medium truncate">
+                          {tx.type} · {tx.itemName}
+                        </p>
+                        <p className="text-[11px] text-zinc-500 truncate">
+                          {tx.reference}
+                          {tx.remarks ? ` · ${tx.remarks}` : ""}
+                          {tx.issuedTo ? ` → ${tx.issuedTo}` : ""}
+                          {tx.location ? ` · ${tx.location}` : ""}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={cn(
+                          "font-mono text-sm font-bold",
+                          tx.type === "Receipt" ? "text-green-400" : "text-red-400"
+                        )}>
+                          {tx.type === "Receipt" ? `+${tx.quantity}` : `-${tx.quantity}`}
+                          <span className="text-zinc-600 text-[10px] font-medium ml-1">{tx.unit}</span>
+                        </p>
+                        <p className="text-[10px] text-zinc-600">
+                          Bal {tx.balance} · {tx.date}
+                        </p>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       </div>
