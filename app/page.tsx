@@ -14,6 +14,7 @@ import {
   Activity,
   AlertTriangle,
   Package,
+  CheckCircle2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,8 +23,12 @@ import { cn } from "@/lib/utils";
 import {
   useWarehouse,
   useBinCards,
+  useInvoices,
+  useInvoiceBatches,
+  formatMoney,
   type BinCard,
   type WarehouseItem,
+  type InvoiceRow,
 } from "@/lib/store";
 
 function cardBalance(card: BinCard) {
@@ -51,8 +56,11 @@ function parseDate(value?: string) {
   if (!value) return 0;
   const iso = Date.parse(value);
   if (!Number.isNaN(iso)) return iso;
-  const m = value.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (m) return Date.parse(`${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`);
+  const m = String(value).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) {
+    const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+    return Date.parse(`${year}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`);
+  }
   return 0;
 }
 
@@ -62,6 +70,10 @@ function inThisMonth(value?: string) {
   const d = new Date(t);
   const now = new Date();
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
+
+function invoiceWhen(inv: InvoiceRow) {
+  return inv.formattedDate || inv.savedAt || inv.printedAt || inv.paidAt || "";
 }
 
 const QUICK_LINKS = [
@@ -95,9 +107,35 @@ const QUICK_LINKS = [
   },
 ];
 
+type ActivityItem = {
+  id: string;
+  sort: number;
+  date: string;
+  href: string;
+  title: string;
+  subtitle: string;
+  amountLabel: string;
+  amountClass: string;
+  meta: string;
+  icon: "invoice" | "receipt" | "issue" | "paid";
+};
+
 export default function DashboardPage() {
   const [items] = useWarehouse();
   const [cards] = useBinCards();
+  const [invoices] = useInvoices();
+  const [batches] = useInvoiceBatches();
+
+  const allInvoices = useMemo(() => {
+    const map = new Map<string, InvoiceRow>();
+    for (const inv of invoices) map.set(inv.invoiceNo, inv);
+    for (const batch of batches) {
+      for (const inv of batch.invoices) {
+        if (!map.has(inv.invoiceNo)) map.set(inv.invoiceNo, inv);
+      }
+    }
+    return Array.from(map.values());
+  }, [invoices, batches]);
 
   const cardByName = useMemo(() => {
     const map = new Map<string, BinCard>();
@@ -106,7 +144,7 @@ export default function DashboardPage() {
   }, [cards]);
 
   const inventory = useMemo(() => {
-    const byName = new Map<string, WarehouseItem & { entries: number }>();
+    const byName = new Map<string, WarehouseItem>();
 
     for (const item of items) {
       const card = cardByName.get(norm(item.name));
@@ -116,7 +154,6 @@ export default function DashboardPage() {
         unit: card?.unit || item.unit,
         location: card?.location || item.location,
         lastUpdated: card ? lastActivityDate(card) : item.lastUpdated,
-        entries: card?.transactions.length ?? 0,
       });
     }
 
@@ -132,53 +169,92 @@ export default function DashboardPage() {
         minStock: 0,
         location: card.location,
         lastUpdated: lastActivityDate(card),
-        entries: card.transactions.length,
       });
     }
 
     return Array.from(byName.values());
   }, [items, cardByName]);
 
-  const monthTx = useMemo(
-    () => cards.flatMap((c) => c.transactions.filter((t) => inThisMonth(t.date))),
-    [cards]
+  const monthInvoices = useMemo(
+    () => allInvoices.filter((inv) => inThisMonth(invoiceWhen(inv))),
+    [allInvoices]
+  );
+
+  const monthRevenue = useMemo(
+    () => monthInvoices.reduce((sum, inv) => sum + (Number(inv.total) || 0), 0),
+    [monthInvoices]
   );
 
   const stats = useMemo(() => {
     const lowStock = inventory.filter((i) => i.minStock > 0 && i.quantity <= i.minStock).length;
     const outOfStock = inventory.filter((i) => i.quantity === 0).length;
     return {
+      invoices: allInvoices.length,
       warehouse: inventory.length,
       binCards: cards.length,
-      movements: monthTx.length,
+      monthRevenue,
       alerts: lowStock + outOfStock,
     };
-  }, [inventory, cards.length, monthTx.length]);
+  }, [allInvoices.length, inventory, cards.length, monthRevenue]);
 
   const recentActivity = useMemo(() => {
-    const rows = cards.flatMap((card) =>
-      card.transactions.map((tx, idx) => ({
-        id: tx.id,
-        date: tx.date,
-        sort: parseDate(tx.date) + idx,
-        itemName: card.itemName,
-        location: card.location,
-        unit: card.unit,
-        type: tx.type,
-        quantity: tx.quantity,
-        balance: tx.balance,
-        reference: tx.reference,
-        remarks: tx.remarks,
-        issuedTo: tx.issuedTo,
-        href: "/bincards",
-      }))
-    );
+    const rows: ActivityItem[] = [];
+
+    for (const card of cards) {
+      card.transactions.forEach((tx, idx) => {
+        rows.push({
+          id: `tx-${tx.id}`,
+          sort: parseDate(tx.date) + idx,
+          date: tx.date,
+          href: "/bincards",
+          title: `${tx.type} · ${card.itemName}`,
+          subtitle: [
+            tx.reference,
+            tx.remarks,
+            tx.issuedTo ? `→ ${tx.issuedTo}` : "",
+            card.location,
+          ].filter(Boolean).join(" · "),
+          amountLabel: `${tx.type === "Receipt" ? "+" : "-"}${tx.quantity} ${card.unit}`,
+          amountClass: tx.type === "Receipt" ? "text-green-400" : "text-red-400",
+          meta: `Bal ${tx.balance}`,
+          icon: tx.type === "Receipt" ? "receipt" : "issue",
+        });
+      });
+    }
+
+    for (const inv of allInvoices) {
+      const when = invoiceWhen(inv);
+      rows.push({
+        id: `inv-${inv.invoiceNo}-${inv.savedAt}`,
+        sort: parseDate(when) || parseDate(inv.savedAt),
+        date: inv.formattedDate || todayish(inv.savedAt),
+        href: "/invoicing",
+        title: inv.paid ? `Invoice ${inv.invoiceNo} paid` : `Invoice ${inv.invoiceNo}`,
+        subtitle: [
+          inv.regNo,
+          inv.loadedFrom && inv.deliveredTo ? `${inv.loadedFrom} → ${inv.deliveredTo}` : inv.loadedFrom || inv.deliveredTo,
+          inv.orderNo ? `Order ${inv.orderNo}` : "",
+        ].filter(Boolean).join(" · "),
+        amountLabel: `MWK ${formatMoney(Number(inv.total) || 0)}`,
+        amountClass: inv.paid ? "text-green-400" : "text-white",
+        meta: inv.paid ? "Paid" : inv.printed ? "Printed" : "Saved",
+        icon: inv.paid ? "paid" : "invoice",
+      });
+    }
 
     rows.sort((a, b) => b.sort - a.sort);
-    return rows.slice(0, 12);
-  }, [cards]);
+    return rows.slice(0, 14);
+  }, [cards, allInvoices]);
 
   const STATS = [
+    {
+      title: "Total Invoices",
+      value: String(stats.invoices),
+      icon: FileText,
+      color: "text-blue-400",
+      bg: "bg-blue-500/10",
+      href: "/invoicing",
+    },
     {
       title: "Warehouse Items",
       value: String(stats.warehouse),
@@ -196,20 +272,12 @@ export default function DashboardPage() {
       href: "/bincards",
     },
     {
-      title: "Movements This Month",
-      value: String(stats.movements),
+      title: "This Month",
+      value: `MWK ${formatMoney(stats.monthRevenue)}`,
       icon: BarChart3,
       color: "text-amber-400",
       bg: "bg-amber-500/10",
-      href: "/warehouse",
-    },
-    {
-      title: "Stock Alerts",
-      value: String(stats.alerts),
-      icon: AlertTriangle,
-      color: "text-red-400",
-      bg: "bg-red-500/10",
-      href: "/warehouse",
+      href: "/statements",
     },
   ];
 
@@ -222,13 +290,23 @@ export default function DashboardPage() {
               {greeting()} 👋
             </h2>
             <p className="text-zinc-500 text-sm mt-1">
-              Live stock and bin card activity at Affordable Wholesale.
+              Live invoices, stock and bin card activity at Affordable Wholesale.
             </p>
           </div>
-          <Badge className="bg-zinc-900 text-zinc-400 border-zinc-800 font-normal text-xs">
-            <Activity className="w-3 h-3 mr-1.5 text-green-400" />
-            System Online
-          </Badge>
+          <div className="flex items-center gap-2">
+            {stats.alerts > 0 && (
+              <Link href="/warehouse">
+                <Badge className="bg-red-500/10 text-red-400 border-red-500/20 font-normal text-xs">
+                  <AlertTriangle className="w-3 h-3 mr-1.5" />
+                  {stats.alerts} stock {stats.alerts === 1 ? "alert" : "alerts"}
+                </Badge>
+              </Link>
+            )}
+            <Badge className="bg-zinc-900 text-zinc-400 border-zinc-800 font-normal text-xs">
+              <Activity className="w-3 h-3 mr-1.5 text-green-400" />
+              System Online
+            </Badge>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -244,7 +322,7 @@ export default function DashboardPage() {
                       </div>
                       <ArrowRight className="w-3.5 h-3.5 text-zinc-700 group-hover:text-zinc-400 transition-colors" />
                     </div>
-                    <p className="text-2xl font-black text-white tracking-tight">
+                    <p className="text-2xl font-black text-white tracking-tight truncate">
                       {stat.value}
                     </p>
                     <p className="text-xs text-zinc-500 mt-1 font-medium uppercase tracking-wider">
@@ -292,53 +370,46 @@ export default function DashboardPage() {
             <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500">
               Recent Activity
             </h3>
-            <Link href="/bincards" className="text-[11px] text-zinc-500 hover:text-zinc-300">
-              View bin cards →
-            </Link>
+            <div className="flex gap-3">
+              <Link href="/invoicing" className="text-[11px] text-zinc-500 hover:text-zinc-300">
+                Invoices →
+              </Link>
+              <Link href="/bincards" className="text-[11px] text-zinc-500 hover:text-zinc-300">
+                Bin cards →
+              </Link>
+            </div>
           </div>
           <Card className="bg-zinc-950 border-zinc-900 overflow-hidden">
             {recentActivity.length === 0 ? (
               <CardContent className="p-12 text-center">
                 <Package className="w-8 h-8 text-zinc-800 mx-auto mb-3" />
                 <p className="text-zinc-600 text-sm">
-                  Activity will appear here as you record receipts and issues.
+                  Activity will appear here as you create invoices and record stock movements.
                 </p>
               </CardContent>
             ) : (
               <div className="divide-y divide-zinc-900">
-                {recentActivity.map((tx) => (
-                  <Link href={tx.href} key={tx.id} className="block hover:bg-zinc-900/40 transition-colors">
+                {recentActivity.map((row) => (
+                  <Link href={row.href} key={row.id} className="block hover:bg-zinc-900/40 transition-colors">
                     <div className="px-5 py-3.5 flex items-center gap-4">
                       <div className={cn(
                         "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
-                        tx.type === "Receipt" ? "bg-green-500/10" : "bg-red-500/10"
+                        row.icon === "receipt" || row.icon === "paid" ? "bg-green-500/10"
+                          : row.icon === "issue" ? "bg-red-500/10"
+                          : "bg-blue-500/10"
                       )}>
-                        {tx.type === "Receipt"
-                          ? <TrendingUp className="w-4 h-4 text-green-400" />
-                          : <TrendingDown className="w-4 h-4 text-red-400" />}
+                        {row.icon === "receipt" && <TrendingUp className="w-4 h-4 text-green-400" />}
+                        {row.icon === "issue" && <TrendingDown className="w-4 h-4 text-red-400" />}
+                        {row.icon === "invoice" && <FileText className="w-4 h-4 text-blue-400" />}
+                        {row.icon === "paid" && <CheckCircle2 className="w-4 h-4 text-green-400" />}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-white font-medium truncate">
-                          {tx.type} · {tx.itemName}
-                        </p>
-                        <p className="text-[11px] text-zinc-500 truncate">
-                          {tx.reference}
-                          {tx.remarks ? ` · ${tx.remarks}` : ""}
-                          {tx.issuedTo ? ` → ${tx.issuedTo}` : ""}
-                          {tx.location ? ` · ${tx.location}` : ""}
-                        </p>
+                        <p className="text-sm text-white font-medium truncate">{row.title}</p>
+                        <p className="text-[11px] text-zinc-500 truncate">{row.subtitle || "—"}</p>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className={cn(
-                          "font-mono text-sm font-bold",
-                          tx.type === "Receipt" ? "text-green-400" : "text-red-400"
-                        )}>
-                          {tx.type === "Receipt" ? `+${tx.quantity}` : `-${tx.quantity}`}
-                          <span className="text-zinc-600 text-[10px] font-medium ml-1">{tx.unit}</span>
-                        </p>
-                        <p className="text-[10px] text-zinc-600">
-                          Bal {tx.balance} · {tx.date}
-                        </p>
+                        <p className={cn("font-mono text-sm font-bold", row.amountClass)}>{row.amountLabel}</p>
+                        <p className="text-[10px] text-zinc-600">{row.meta} · {row.date}</p>
                       </div>
                     </div>
                   </Link>
@@ -350,4 +421,11 @@ export default function DashboardPage() {
       </div>
     </AppShell>
   );
+}
+
+function todayish(iso?: string) {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso.slice(0, 10);
+  return new Date(t).toLocaleDateString("en-GB");
 }
