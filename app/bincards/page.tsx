@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table";
 import {
   Dialog, DialogContent, DialogHeader,
-  DialogTitle, DialogFooter,
+  DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem,
@@ -24,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Plus, Search, ClipboardList, TrendingUp,
   TrendingDown, Printer, Trash2, Edit2,
-  Settings2, Tag, Ruler,
+  Settings2, Tag, Ruler, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -33,6 +33,14 @@ import {
   type BinCard, type BinCardTransaction,
   type BinCardUnit, type BinCardCategory,
 } from "@/lib/store";
+
+function recalcBalances(openingBalance: number, transactions: BinCardTransaction[]): BinCardTransaction[] {
+  let bal = openingBalance;
+  return transactions.map((t) => {
+    bal = t.type === "Receipt" ? bal + t.quantity : Math.max(0, bal - t.quantity);
+    return { ...t, balance: bal };
+  });
+}
 
 export default function BinCardsPage() {
   const [cards, setCards] = useBinCards();
@@ -45,7 +53,10 @@ export default function BinCardsPage() {
   // Dialogs
   const [txDialog, setTxDialog] = useState(false);
   const [newCardDialog, setNewCardDialog] = useState(false);
+  const [editCardDialog, setEditCardDialog] = useState(false);
   const [manageDialog, setManageDialog] = useState(false);
+  const [deleteCardId, setDeleteCardId] = useState<string | null>(null);
+  const [deleteTxId, setDeleteTxId] = useState<string | null>(null);
   const [newUnitLabel, setNewUnitLabel] = useState("");
   const [newCatLabel, setNewCatLabel] = useState("");
 
@@ -55,7 +66,7 @@ export default function BinCardsPage() {
     quantity: 0, reference: "", remarks: "", issuedTo: "",
   });
 
-  // New card form
+  // New / edit card form
   const [cardForm, setCardForm] = useState({
     itemName: "", unit: "", location: "", openingBalance: 0,
   });
@@ -77,6 +88,18 @@ export default function BinCardsPage() {
     const txs = syncedSelected.transactions;
     return txs.length > 0 ? txs[txs.length - 1].balance : syncedSelected.openingBalance;
   }, [syncedSelected]);
+
+  const cardPendingDelete = useMemo(
+    () => (deleteCardId ? cards.find((c) => c.id === deleteCardId) ?? null : null),
+    [cards, deleteCardId]
+  );
+
+  const txPendingDelete = useMemo(
+    () => (syncedSelected && deleteTxId
+      ? syncedSelected.transactions.find((t) => t.id === deleteTxId) ?? null
+      : null),
+    [syncedSelected, deleteTxId]
+  );
 
   // ── Add Transaction ──
   const handleAddTransaction = () => {
@@ -121,27 +144,61 @@ export default function BinCardsPage() {
     setNewCardDialog(false);
   };
 
-  // ���─ Delete Bin Card ──
-  const handleDeleteCard = (id: string) => {
-    setCards((prev) => prev.filter((c) => c.id !== id));
-    if (selectedCard?.id === id) setSelectedCard(null);
+  // ── Open Edit Bin Card ──
+  const openEditCard = (card: BinCard) => {
+    setSelectedCard(card);
+    setCardForm({
+      itemName: card.itemName,
+      unit: card.unit,
+      location: card.location,
+      openingBalance: card.openingBalance,
+    });
+    setEditCardDialog(true);
   };
 
-  // ── Delete Transaction ──
-  const handleDeleteTx = (txId: string) => {
-    if (!syncedSelected) return;
-    // Recalculate balances after removal
-    const remaining = syncedSelected.transactions.filter((t) => t.id !== txId);
-    let bal = syncedSelected.openingBalance;
-    const recalc = remaining.map((t) => {
-      bal = t.type === "Receipt" ? bal + t.quantity : Math.max(0, bal - t.quantity);
-      return { ...t, balance: bal };
-    });
+  // ── Save Edit Bin Card ──
+  const handleEditCard = () => {
+    if (!syncedSelected || !cardForm.itemName.trim()) return;
+    const openingChanged = cardForm.openingBalance !== syncedSelected.openingBalance;
+    const transactions = openingChanged
+      ? recalcBalances(cardForm.openingBalance, syncedSelected.transactions)
+      : syncedSelected.transactions;
+
+    const updated: BinCard = {
+      ...syncedSelected,
+      itemName: cardForm.itemName.trim(),
+      unit: cardForm.unit || units[0]?.label || syncedSelected.unit,
+      location: cardForm.location,
+      openingBalance: cardForm.openingBalance,
+      transactions,
+    };
+
+    setCards((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    setSelectedCard(updated);
+    setCardForm({ itemName: "", unit: "", location: "", openingBalance: 0 });
+    setEditCardDialog(false);
+  };
+
+  // ── Delete Bin Card (after confirm) ──
+  const handleDeleteCard = () => {
+    if (!deleteCardId) return;
+    const id = deleteCardId;
+    setCards((prev) => prev.filter((c) => c.id !== id));
+    if (selectedCard?.id === id) setSelectedCard(null);
+    setDeleteCardId(null);
+  };
+
+  // ── Delete Transaction (after confirm) ──
+  const handleDeleteTx = () => {
+    if (!syncedSelected || !deleteTxId) return;
+    const remaining = syncedSelected.transactions.filter((t) => t.id !== deleteTxId);
+    const recalc = recalcBalances(syncedSelected.openingBalance, remaining);
     setCards((prev) =>
       prev.map((c) =>
         c.id === syncedSelected.id ? { ...c, transactions: recalc } : c
       )
     );
+    setDeleteTxId(null);
   };
 
   // ── Add/Remove Unit ──
@@ -210,6 +267,34 @@ export default function BinCardsPage() {
     w.document.close();
   };
 
+  const cardFormFields = (
+    <>
+      {[
+        { label: "Item Name", field: "itemName" as const, type: "text", placeholder: "e.g. Diesel Fuel" },
+        { label: "Location", field: "location" as const, type: "text", placeholder: "e.g. Tank A" },
+        { label: "Opening Balance", field: "openingBalance" as const, type: "number", placeholder: "0" },
+      ].map(({ label, field, type, placeholder }) => (
+        <div key={field} className="space-y-1.5">
+          <Label className="text-xs text-zinc-400 uppercase tracking-wider">{label}</Label>
+          <Input type={type} placeholder={placeholder} value={cardForm[field]}
+            onChange={(e) => setCardForm((f) => ({
+              ...f, [field]: type === "number" ? parseFloat(e.target.value) || 0 : e.target.value
+            }))}
+            className="bg-zinc-900 border-zinc-800 focus:border-blue-500/40" />
+        </div>
+      ))}
+      <div className="space-y-1.5">
+        <Label className="text-xs text-zinc-400 uppercase tracking-wider">Unit of Measure</Label>
+        <Select value={cardForm.unit || units[0]?.label} onValueChange={(v) => setCardForm((f) => ({ ...f, unit: v }))}>
+          <SelectTrigger className="bg-zinc-900 border-zinc-800"><SelectValue placeholder="Select unit" /></SelectTrigger>
+          <SelectContent className="bg-zinc-950 border-zinc-800">
+            {units.map((u) => <SelectItem key={u.id} value={u.label} className="text-zinc-300 focus:bg-zinc-900">{u.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+    </>
+  );
+
   return (
     <AppShell>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -227,7 +312,10 @@ export default function BinCardsPage() {
               className="border-zinc-800 bg-transparent hover:bg-zinc-900 text-zinc-400 h-9">
               <Settings2 className="w-4 h-4 mr-1.5" /> Manage Lists
             </Button>
-            <Button onClick={() => setNewCardDialog(true)} className="bg-blue-600 hover:bg-blue-500 h-9">
+            <Button onClick={() => {
+              setCardForm({ itemName: "", unit: "", location: "", openingBalance: 0 });
+              setNewCardDialog(true);
+            }} className="bg-blue-600 hover:bg-blue-500 h-9">
               <Plus className="w-4 h-4 mr-2" /> New Bin Card
             </Button>
           </div>
@@ -269,13 +357,18 @@ export default function BinCardsPage() {
                           <p className={cn("text-sm font-bold", isSelected ? "text-white" : "text-zinc-300")}>{card.itemName}</p>
                           <p className="text-[10px] text-zinc-600 mt-0.5">{card.location} · {card.unit}</p>
                         </button>
-                        <div className="flex items-center gap-2">
-                          <div className="text-right">
+                        <div className="flex items-center gap-1">
+                          <div className="text-right mr-1">
                             <p className={cn("text-lg font-black font-mono", isSelected ? "text-white" : "text-zinc-300")}>{bal}</p>
                             <p className="text-[10px] text-zinc-600">{card.transactions.length} entries</p>
                           </div>
                           <Button size="sm" variant="ghost"
-                            onClick={() => handleDeleteCard(card.id)}
+                            onClick={(e) => { e.stopPropagation(); openEditCard(card); }}
+                            className="h-7 w-7 p-0 text-zinc-700 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button size="sm" variant="ghost"
+                            onClick={(e) => { e.stopPropagation(); setDeleteCardId(card.id); }}
                             className="h-7 w-7 p-0 text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -300,6 +393,10 @@ export default function BinCardsPage() {
                     </p>
                   </div>
                   <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => openEditCard(syncedSelected)}
+                      className="border-zinc-800 bg-transparent hover:bg-zinc-900 text-zinc-400 h-9">
+                      <Edit2 className="w-4 h-4 mr-1.5" /> Edit
+                    </Button>
                     <Button variant="outline" size="sm" onClick={printBinCard}
                       className="border-zinc-800 bg-transparent hover:bg-zinc-900 text-zinc-400 h-9">
                       <Printer className="w-4 h-4 mr-1.5" /> Print
@@ -369,7 +466,7 @@ export default function BinCardsPage() {
                           </TableCell>
                           <TableCell>
                             <Button size="sm" variant="ghost"
-                              onClick={() => handleDeleteTx(tx.id)}
+                              onClick={() => setDeleteTxId(tx.id)}
                               className="h-6 w-6 p-0 text-zinc-700 hover:text-red-400 opacity-0 group-hover:opacity-100">
                               <Trash2 className="w-3 h-3" />
                             </Button>
@@ -379,7 +476,7 @@ export default function BinCardsPage() {
                       {syncedSelected.transactions.length === 0 && (
                         <TableRow>
                           <TableCell colSpan={8} className="h-24 text-center text-zinc-700 text-sm">
-                            No entries yet. Click "Add Entry" to start.
+                            No entries yet. Click &quot;Add Entry&quot; to start.
                           </TableCell>
                         </TableRow>
                       )}
@@ -452,33 +549,74 @@ export default function BinCardsPage() {
         <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-sm">
           <DialogHeader><DialogTitle>Create Bin Card</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
-            {[
-              { label: "Item Name", field: "itemName" as const, type: "text", placeholder: "e.g. Diesel Fuel" },
-              { label: "Location", field: "location" as const, type: "text", placeholder: "e.g. Tank A" },
-              { label: "Opening Balance", field: "openingBalance" as const, type: "number", placeholder: "0" },
-            ].map(({ label, field, type, placeholder }) => (
-              <div key={field} className="space-y-1.5">
-                <Label className="text-xs text-zinc-400 uppercase tracking-wider">{label}</Label>
-                <Input type={type} placeholder={placeholder} value={cardForm[field]}
-                  onChange={(e) => setCardForm((f) => ({
-                    ...f, [field]: type === "number" ? parseFloat(e.target.value) || 0 : e.target.value
-                  }))}
-                  className="bg-zinc-900 border-zinc-800 focus:border-blue-500/40" />
-              </div>
-            ))}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-zinc-400 uppercase tracking-wider">Unit of Measure</Label>
-              <Select value={cardForm.unit || units[0]?.label} onValueChange={(v) => setCardForm((f) => ({ ...f, unit: v }))}>
-                <SelectTrigger className="bg-zinc-900 border-zinc-800"><SelectValue placeholder="Select unit" /></SelectTrigger>
-                <SelectContent className="bg-zinc-950 border-zinc-800">
-                  {units.map((u) => <SelectItem key={u.id} value={u.label} className="text-zinc-300 focus:bg-zinc-900">{u.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            {cardFormFields}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setNewCardDialog(false)} className="text-zinc-400">Cancel</Button>
             <Button onClick={handleAddCard} className="bg-blue-600 hover:bg-blue-500">Create Card</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Bin Card Dialog */}
+      <Dialog open={editCardDialog} onOpenChange={setEditCardDialog}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Edit Bin Card</DialogTitle>
+            <DialogDescription className="text-zinc-500 text-xs">
+              Changing the opening balance will recalculate all entry balances.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {cardFormFields}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setEditCardDialog(false)} className="text-zinc-400">Cancel</Button>
+            <Button onClick={handleEditCard} className="bg-blue-600 hover:bg-blue-500">Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Bin Card Confirm */}
+      <Dialog open={!!deleteCardId} onOpenChange={(open) => { if (!open) setDeleteCardId(null); }}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400" /> Delete Bin Card?
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              This will permanently delete{" "}
+              <span className="text-white font-semibold">{cardPendingDelete?.itemName ?? "this card"}</span>
+              {cardPendingDelete ? ` and all ${cardPendingDelete.transactions.length} entries` : ""}. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteCardId(null)} className="text-zinc-400">Cancel</Button>
+            <Button onClick={handleDeleteCard} className="bg-red-700 hover:bg-red-600">
+              <Trash2 className="w-4 h-4 mr-1.5" /> Delete Card
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Transaction Confirm */}
+      <Dialog open={!!deleteTxId} onOpenChange={(open) => { if (!open) setDeleteTxId(null); }}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400" /> Delete Entry?
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400">
+              Remove this {txPendingDelete?.type?.toLowerCase() ?? "entry"}
+              {txPendingDelete ? ` of ${txPendingDelete.quantity}` : ""}
+              {txPendingDelete?.reference ? ` (${txPendingDelete.reference})` : ""}? Remaining balances will be recalculated.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteTxId(null)} className="text-zinc-400">Cancel</Button>
+            <Button onClick={handleDeleteTx} className="bg-red-700 hover:bg-red-600">
+              <Trash2 className="w-4 h-4 mr-1.5" /> Delete Entry
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
